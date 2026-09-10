@@ -32,6 +32,19 @@ local function Create(className, properties)
 	end
 	if parent then
 		instance.Parent = parent
+
+		-- ZIndex is global within the ScreenGui. Keep child UI above its
+		-- parent so opaque CanvasGroups/Frames cannot cover their contents.
+		if instance:IsA("GuiObject") and parent:IsA("GuiObject") then
+			local parentZ = parent.ZIndex
+			local hasZIndex = properties.ZIndex ~= nil
+
+			if hasZIndex then
+				instance.ZIndex = parentZ + instance.ZIndex
+			else
+				instance.ZIndex = parentZ + 1
+			end
+		end
 	end
 	return instance
 end
