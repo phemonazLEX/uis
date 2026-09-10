@@ -268,8 +268,8 @@ function Library:CreateWindow(config)
                 PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10)
             })
         })
-
-        TabButton.MouseButton1Click:Connect(function()
+-- Create the selection function
+        local function SelectTab()
             for _, t in pairs(WindowObj.Tabs) do
                 t.Scroll.Visible = false
                 Tween(t.Button, {TextColor3 = Theme.SubText}, 0.2)
@@ -279,15 +279,20 @@ function Library:CreateWindow(config)
             Tween(TabButton, {TextColor3 = Theme.Text}, 0.2)
             Tween(TabIndicator, {BackgroundTransparency = 0}, 0.2)
             WindowObj.CurrentTab = TabObj
-        end)
+        end
+
+        -- Connect it to the button click
+        TabButton.MouseButton1Click:Connect(SelectTab)
 
         TabObj.Button = TabButton
         TabObj.Indicator = TabIndicator
         TabObj.Scroll = TabScroll
         table.insert(WindowObj.Tabs, TabObj)
 
-        -- Auto select first tab
-        if #WindowObj.Tabs == 1 then TabButton.MouseButton1Click:Fire() end
+        -- Auto select first tab by calling the function directly instead of firing the event
+        if #WindowObj.Tabs == 1 then 
+            SelectTab() 
+        end
 
         --// Section System
         function TabObj:AddSection(secConfig)
