@@ -1,1 +1,917 @@
+--[=[
+    LunaUI Framework
+    A modern, high-performance, client-side Luau UI library.
+]=]
 
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local Library = {
+    Version = "1.0.0",
+    Windows = {},
+    DefaultTheme = {
+        Background = Color3.fromRGB(20, 20, 25),
+        Header = Color3.fromRGB(25, 25, 30),
+        Section = Color3.fromRGB(30, 30, 35),
+        Element = Color3.fromRGB(35, 35, 40),
+        ElementHover = Color3.fromRGB(45, 45, 50),
+        Text = Color3.fromRGB(255, 255, 255),
+        SubText = Color3.fromRGB(180, 180, 180),
+        Accent = Color3.fromRGB(93, 63, 211), -- Purple
+        Outline = Color3.fromRGB(45, 45, 50),
+        Shadow = Color3.fromRGB(0, 0, 0)
+    }
+}
+
+--// Utilities
+local function Create(className, properties, children)
+    local inst = Instance.new(className)
+    for k, v in pairs(properties or {}) do
+        inst[k] = v
+    end
+    for _, child in pairs(children or {}) do
+        child.Parent = inst
+    end
+    return inst
+end
+
+local function Tween(instance, properties, duration, style, direction)
+    duration = duration or 0.2
+    style = style or Enum.EasingStyle.Quad
+    direction = direction or Enum.EasingDirection.Out
+    local tween = TweenService:Create(instance, TweenInfo.new(duration, style, direction), properties)
+    tween:Play()
+    return tween
+end
+
+local function MakeDraggable(topbar, window)
+    local dragging, dragInput, dragStart, startPos
+    topbar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = window.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    topbar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            window.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+--// Window Creation
+function Library:CreateWindow(config)
+    config = config or {}
+    local Title = config.Title or "LunaUI"
+    local Subtitle = config.Subtitle or "Interface"
+    local Size = config.Size or UDim2.fromOffset(600, 400)
+    local Theme = config.Theme and typeof(config.Theme) == "table" and config.Theme or self.DefaultTheme
+    local ToggleKey = config.ToggleKey or Enum.KeyCode.RightShift
+
+    local WindowObj = {
+        Tabs = {},
+        CurrentTab = nil,
+        Theme = Theme
+    }
+
+    -- Protect GUI (Uses gethui() if exploit, else CoreGui, fallback PlayerGui)
+    local targetParent
+    local success = pcall(function() targetParent = gethui and gethui() or CoreGui end)
+    if not success or not targetParent then targetParent = game.Players.LocalPlayer:WaitForChild("PlayerGui") end
+
+    local ScreenGui = Create("ScreenGui", {
+        Name = Title .. "GUI",
+        Parent = targetParent,
+        IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        DisplayOrder = 100
+    })
+
+    -- Main Frame
+    local MainFrame = Create("Frame", {
+        Name = "MainFrame",
+        Size = Size,
+        Position = UDim2.fromScale(0.5, 0.5),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.Background,
+        ClipsDescendants = false,
+        Active = true
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+        Create("UIStroke", { Color = Theme.Outline, Thickness = 1 }),
+        Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder })
+    })
+    MainFrame.Parent = ScreenGui
+
+    -- Popup Overlay (Catches clicks to close dropdowns/colorpickers)
+    local PopupOverlay = Create("TextButton", {
+        Name = "PopupOverlay",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        ZIndex = 90,
+        Visible = false,
+        Text = "",
+        Parent = MainFrame
+    })
+
+    local Header = Create("Frame", {
+        Name = "Header",
+        Size = UDim2.new(1, 0, 0, 40),
+        BackgroundColor3 = Theme.Header,
+        LayoutOrder = 1
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+        -- Fix bottom corners to connect with main body
+        Create("Frame", {
+            Size = UDim2.new(1, 0, 0, 8),
+            Position = UDim2.new(0, 0, 1, -8),
+            BackgroundColor3 = Theme.Header,
+            BorderSizePixel = 0
+        }),
+        Create("TextLabel", {
+            Name = "Title",
+            Position = UDim2.new(0, 15, 0, 0),
+            Size = UDim2.new(0, 200, 1, 0),
+            BackgroundTransparency = 1,
+            Text = Title .. " | <font color='#" .. Theme.SubText:ToHex() .. "'>" .. Subtitle .. "</font>",
+            RichText = true,
+            TextColor3 = Theme.Text,
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left
+        })
+    })
+    Header.Parent = MainFrame
+    MakeDraggable(Header, MainFrame)
+
+    local TabContainer = Create("Frame", {
+        Name = "TabContainer",
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundColor3 = Theme.Background,
+        LayoutOrder = 2
+    }, {
+        Create("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Padding = UDim.new(0, 5)
+        }),
+        Create("UIPadding", { PaddingLeft = UDim.new(0, 15), PaddingTop = UDim.new(0, 5) })
+    })
+    TabContainer.Parent = MainFrame
+
+    local ContentContainer = Create("Frame", {
+        Name = "ContentContainer",
+        Size = UDim2.new(1, 0, 1, -70),
+        BackgroundColor3 = Theme.Background,
+        LayoutOrder = 3
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) })
+    })
+    ContentContainer.Parent = MainFrame
+
+    -- Toggle Logic
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == ToggleKey then
+            ScreenGui.Enabled = not ScreenGui.Enabled
+        end
+    end)
+
+    -- Window Methods
+    function WindowObj:SetSize(newSize)
+        Tween(MainFrame, {Size = newSize}, 0.3, Enum.EasingStyle.Quint)
+    end
+
+    --// Popup Manager
+    local ActivePopup = nil
+    local function ClosePopup()
+        if ActivePopup then
+            ActivePopup:Destroy()
+            ActivePopup = nil
+        end
+        PopupOverlay.Visible = false
+    end
+    PopupOverlay.MouseButton1Click:Connect(ClosePopup)
+
+    local function OpenPopup(element, popupGui)
+        ClosePopup()
+        ActivePopup = popupGui
+        popupGui.Parent = MainFrame
+        PopupOverlay.Visible = true
+
+        -- Calculate Relative Position to MainFrame
+        local function UpdatePos()
+            if not popupGui.Parent then return end
+            -- Anchor popup right below the triggering element
+            local relX = element.AbsolutePosition.X - MainFrame.AbsolutePosition.X
+            local relY = element.AbsolutePosition.Y - MainFrame.AbsolutePosition.Y + element.AbsoluteSize.Y + 4
+            popupGui.Position = UDim2.fromOffset(relX, relY)
+        end
+        UpdatePos()
+        -- Move popup if the window scrolls or moves
+        popupGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(UpdatePos)
+        element:GetPropertyChangedSignal("AbsolutePosition"):Connect(UpdatePos)
+    end
+
+    --// Tab System
+    function WindowObj:AddTab(tabConfig)
+        local TabName = tabConfig.Name or "Tab"
+        local TabObj = { Sections = {} }
+
+        local TabButton = Create("TextButton", {
+            Size = UDim2.new(0, 0, 1, 0),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundTransparency = 1,
+            Text = TabName,
+            TextColor3 = Theme.SubText,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 13,
+            Parent = TabContainer
+        }, {
+            Create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) })
+        })
+
+        local TabIndicator = Create("Frame", {
+            Size = UDim2.new(1, 0, 0, 2),
+            Position = UDim2.new(0, 0, 1, -2),
+            BackgroundColor3 = Theme.Accent,
+            BackgroundTransparency = 1,
+            Parent = TabButton
+        })
+
+        local TabScroll = Create("ScrollingFrame", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            ScrollBarThickness = 3,
+            ScrollBarImageColor3 = Theme.Outline,
+            BorderSizePixel = 0,
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            Visible = false,
+            Parent = ContentContainer
+        }, {
+            Create("UIListLayout", {
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                Padding = UDim.new(0, 10)
+            }),
+            Create("UIPadding", {
+                PaddingLeft = UDim.new(0, 15), PaddingRight = UDim.new(0, 15),
+                PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10)
+            })
+        })
+
+        TabButton.MouseButton1Click:Connect(function()
+            for _, t in pairs(WindowObj.Tabs) do
+                t.Scroll.Visible = false
+                Tween(t.Button, {TextColor3 = Theme.SubText}, 0.2)
+                Tween(t.Indicator, {BackgroundTransparency = 1}, 0.2)
+            end
+            TabScroll.Visible = true
+            Tween(TabButton, {TextColor3 = Theme.Text}, 0.2)
+            Tween(TabIndicator, {BackgroundTransparency = 0}, 0.2)
+            WindowObj.CurrentTab = TabObj
+        end)
+
+        TabObj.Button = TabButton
+        TabObj.Indicator = TabIndicator
+        TabObj.Scroll = TabScroll
+        table.insert(WindowObj.Tabs, TabObj)
+
+        -- Auto select first tab
+        if #WindowObj.Tabs == 1 then TabButton.MouseButton1Click:Fire() end
+
+        --// Section System
+        function TabObj:AddSection(secConfig)
+            local SecName = secConfig.Name or "Section"
+            local SectionObj = {}
+
+            local SectionFrame = Create("Frame", {
+                Size = UDim2.new(1, 0, 0, 0),
+                AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundColor3 = Theme.Section,
+                Parent = TabScroll
+            }, {
+                Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+                Create("UIStroke", { Color = Theme.Outline, Thickness = 1 }),
+                Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5) }),
+                Create("UIPadding", {
+                    PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+                    PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10)
+                })
+            })
+
+            Create("TextLabel", {
+                Size = UDim2.new(1, 0, 0, 20),
+                BackgroundTransparency = 1,
+                Text = SecName,
+                TextColor3 = Theme.Text,
+                Font = Enum.Font.GothamBold,
+                TextSize = 14,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = SectionFrame,
+                LayoutOrder = 0
+            })
+
+            local function BaseElement(name)
+                local container = Create("Frame", {
+                    Size = UDim2.new(1, 0, 0, 36),
+                    BackgroundColor3 = Theme.Element,
+                    Parent = SectionFrame
+                }, {
+                    Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                    Create("UIStroke", { Color = Theme.Outline, Thickness = 1 }),
+                    Create("TextLabel", {
+                        Size = UDim2.new(1, -10, 1, 0),
+                        Position = UDim2.new(0, 10, 0, 0),
+                        BackgroundTransparency = 1,
+                        Text = name,
+                        TextColor3 = Theme.Text,
+                        Font = Enum.Font.GothamMedium,
+                        TextSize = 13,
+                        TextXAlignment = Enum.TextXAlignment.Left
+                    })
+                })
+                return container
+            end
+
+            --// Elements
+            function SectionObj:AddToggle(cfg)
+                local TName = cfg.Name or "Toggle"
+                local Default = cfg.Default or false
+                local Callback = cfg.Callback or function() end
+
+                local el = BaseElement(TName)
+                local ToggleBtn = Create("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = el })
+                
+                local Checkbox = Create("Frame", {
+                    Size = UDim2.new(0, 20, 0, 20),
+                    Position = UDim2.new(1, -30, 0.5, -10),
+                    BackgroundColor3 = Theme.Background,
+                    Parent = el
+                }, {
+                    Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                    Create("UIStroke", { Color = Theme.Outline, Thickness = 1 })
+                })
+                local CheckFill = Create("Frame", {
+                    Size = UDim2.new(1, -4, 1, -4),
+                    Position = UDim2.new(0, 2, 0, 2),
+                    BackgroundColor3 = Theme.Accent,
+                    BackgroundTransparency = 1,
+                    Parent = Checkbox
+                }, { Create("UICorner", { CornerRadius = UDim.new(0, 3) }) })
+
+                local state = Default
+                local function UpdateVisuals()
+                    Tween(CheckFill, {BackgroundTransparency = state and 0 or 1}, 0.2)
+                    Tween(Checkbox:FindFirstChild("UIStroke"), {Color = state and Theme.Accent or Theme.Outline}, 0.2)
+                end
+
+                ToggleBtn.MouseButton1Click:Connect(function()
+                    state = not state
+                    UpdateVisuals()
+                    Callback(state)
+                end)
+                UpdateVisuals()
+                if state then Callback(state) end
+
+                return {
+                    SetValue = function(self, v) state = v; UpdateVisuals(); Callback(state) end,
+                    GetValue = function(self) return state end
+                }
+            end
+
+            function SectionObj:AddButton(cfg)
+                local BName = cfg.Name or "Button"
+                local Callback = cfg.Callback or function() end
+
+                local el = BaseElement(BName)
+                local Btn = Create("TextButton", {
+                    Size = UDim2.new(1, 0, 1, 0),
+                    BackgroundTransparency = 1,
+                    Text = "",
+                    Parent = el
+                })
+
+                -- Hover Effect
+                Btn.MouseEnter:Connect(function() Tween(el, {BackgroundColor3 = Theme.ElementHover}, 0.1) end)
+                Btn.MouseLeave:Connect(function() Tween(el, {BackgroundColor3 = Theme.Element}, 0.1) end)
+                Btn.MouseButton1Down:Connect(function() Tween(el, {BackgroundColor3 = Theme.Outline}, 0.1) end)
+                Btn.MouseButton1Up:Connect(function() Tween(el, {BackgroundColor3 = Theme.ElementHover}, 0.1) end)
+                Btn.MouseButton1Click:Connect(Callback)
+            end
+
+            function SectionObj:AddLabel(cfg)
+                local LText = cfg.Text or "Label"
+                local el = BaseElement(LText)
+            end
+
+            function SectionObj:AddSlider(cfg)
+                local SName = cfg.Name or "Slider"
+                local Min = cfg.Min or 0
+                local Max = cfg.Max or 100
+                local Default = cfg.Default or Min
+                local Decimals = cfg.Decimals or 0
+                local Callback = cfg.Callback or function() end
+
+                local el = BaseElement(SName)
+                local ValueLabel = Create("TextLabel", {
+                    Size = UDim2.new(0, 50, 1, 0),
+                    Position = UDim2.new(1, -60, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = tostring(Default),
+                    TextColor3 = Theme.SubText,
+                    Font = Enum.Font.Gotham,
+                    TextSize = 13,
+                    TextXAlignment = Enum.TextXAlignment.Right,
+                    Parent = el
+                })
+
+                local Track = Create("TextButton", {
+                    Size = UDim2.new(1, -20, 0, 6),
+                    Position = UDim2.new(0, 10, 1, -12),
+                    BackgroundColor3 = Theme.Background,
+                    Text = "",
+                    AutoButtonColor = false,
+                    Parent = el
+                }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+                
+                local Fill = Create("Frame", {
+                    Size = UDim2.new(0, 0, 1, 0),
+                    BackgroundColor3 = Theme.Accent,
+                    Parent = Track
+                }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+
+                -- Expand container for slider
+                el.Size = UDim2.new(1, 0, 0, 50)
+
+                local function SetValue(v)
+                    v = math.clamp(v, Min, Max)
+                    local formatStr = "%."..Decimals.."f"
+                    local rounded = string.format(formatStr, v)
+                    ValueLabel.Text = rounded
+                    local pct = (v - Min) / (Max - Min)
+                    Tween(Fill, {Size = UDim2.new(pct, 0, 1, 0)}, 0.1)
+                    Callback(tonumber(rounded))
+                end
+
+                local dragging = false
+                Track.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                        dragging = true
+                        local pct = math.clamp((input.Position.X - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+                        SetValue(Min + ((Max - Min) * pct))
+                    end
+                end)
+                UserInputService.InputEnded:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+                end)
+                UserInputService.InputChanged:Connect(function(input)
+                    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                        local pct = math.clamp((input.Position.X - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+                        SetValue(Min + ((Max - Min) * pct))
+                    end
+                end)
+
+                SetValue(Default)
+            end
+
+            function SectionObj:AddDropdown(cfg)
+                local DName = cfg.Name or "Dropdown"
+                local Options = cfg.Options or {}
+                local Default = cfg.Default
+                local Multi = cfg.Multi or false
+                local Callback = cfg.Callback or function() end
+                
+                local Selected = Default or (Multi and {} or nil)
+
+                local el = BaseElement(DName)
+                local DisplayText = Multi and "Select Options..." or (Selected or "Select...")
+                local DisplayLabel = Create("TextLabel", {
+                    Size = UDim2.new(0, 120, 1, -12),
+                    Position = UDim2.new(1, -130, 0, 6),
+                    BackgroundColor3 = Theme.Background,
+                    Text = DisplayText,
+                    TextColor3 = Theme.SubText,
+                    Font = Enum.Font.Gotham,
+                    TextSize = 12,
+                    Parent = el
+                }, {
+                    Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                    Create("UIStroke", { Color = Theme.Outline, Thickness = 1 })
+                })
+                
+                local Trigger = Create("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = el })
+
+                local function UpdateDisplay()
+                    if Multi then
+                        local txt = ""
+                        for _, v in pairs(Selected) do txt = txt .. v .. ", " end
+                        txt = txt ~= "" and string.sub(txt, 1, -3) or "Select Options..."
+                        DisplayLabel.Text = txt
+                    else
+                        DisplayLabel.Text = Selected or "Select..."
+                    end
+                end
+                UpdateDisplay()
+
+                Trigger.MouseButton1Click:Connect(function()
+                    if ActivePopup then ClosePopup() return end
+
+                    -- The Popup list
+                    local ListFrame = Create("Frame", {
+                        Size = UDim2.new(0, el.AbsoluteSize.X, 0, 0),
+                        BackgroundColor3 = Theme.ElementHover,
+                        ZIndex = 100,
+                        Active = true -- Sink input so it doesn't click the overlay
+                    }, {
+                        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+                        Create("UIStroke", { Color = Theme.Outline, Thickness = 1 }),
+                        Create("DropShadow", { ShadowColor = Theme.Shadow, ShadowTransparency = 0.5 }) -- Assuming shadow or UIStroke
+                    })
+
+                    local Scroll = Create("ScrollingFrame", {
+                        Size = UDim2.new(1, 0, 1, 0),
+                        BackgroundTransparency = 1,
+                        ScrollBarThickness = 2,
+                        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                        ZIndex = 101,
+                        Parent = ListFrame
+                    }, {
+                        Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }),
+                        Create("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) })
+                    })
+
+                    -- Height Constraints
+                    local maxItems = 5
+                    local itemHeight = 30
+                    local listHeight = math.min(#Options, maxItems) * itemHeight + 8
+                    ListFrame.Size = UDim2.new(0, el.AbsoluteSize.X, 0, listHeight)
+
+                    for i, opt in ipairs(Options) do
+                        local isSelected = false
+                        if Multi then
+                            for _, v in pairs(Selected) do if v == opt then isSelected = true break end end
+                        else
+                            isSelected = (Selected == opt)
+                        end
+
+                        local OptBtn = Create("TextButton", {
+                            Size = UDim2.new(1, 0, 0, itemHeight),
+                            BackgroundTransparency = 1,
+                            Text = opt,
+                            TextColor3 = isSelected and Theme.Accent or Theme.Text,
+                            Font = Enum.Font.Gotham,
+                            TextSize = 13,
+                            ZIndex = 102,
+                            Parent = Scroll
+                        })
+
+                        OptBtn.MouseEnter:Connect(function() Tween(OptBtn, {BackgroundTransparency = 0.9}, 0.1) end)
+                        OptBtn.MouseLeave:Connect(function() Tween(OptBtn, {BackgroundTransparency = 1}, 0.1) end)
+
+                        OptBtn.MouseButton1Click:Connect(function()
+                            if Multi then
+                                local found = table.find(Selected, opt)
+                                if found then
+                                    table.remove(Selected, found)
+                                    OptBtn.TextColor3 = Theme.Text
+                                else
+                                    table.insert(Selected, opt)
+                                    OptBtn.TextColor3 = Theme.Accent
+                                end
+                                UpdateDisplay()
+                                Callback(Selected)
+                            else
+                                Selected = opt
+                                UpdateDisplay()
+                                Callback(Selected)
+                                ClosePopup()
+                            end
+                        end)
+                    end
+
+                    OpenPopup(el, ListFrame)
+                end)
+
+                return {
+                    SetOptions = function(self, newOpts) Options = newOpts end,
+                    SetValue = function(self, val) Selected = val; UpdateDisplay(); Callback(Selected) end
+                }
+            end
+
+            function SectionObj:AddKeybind(cfg)
+                local KName = cfg.Name or "Keybind"
+                local Default = cfg.Default or Enum.KeyCode.Unknown
+                local Callback = cfg.Callback or function() end
+
+                local el = BaseElement(KName)
+                local currentKey = Default
+                local isBinding = false
+
+                local BindBtn = Create("TextButton", {
+                    Size = UDim2.new(0, 80, 1, -12),
+                    Position = UDim2.new(1, -90, 0, 6),
+                    BackgroundColor3 = Theme.Background,
+                    Text = currentKey == Enum.KeyCode.Unknown and "None" or currentKey.Name,
+                    TextColor3 = Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = 12,
+                    Parent = el
+                }, {
+                    Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                    Create("UIStroke", { Color = Theme.Outline, Thickness = 1 })
+                })
+
+                BindBtn.MouseButton1Click:Connect(function()
+                    isBinding = true
+                    BindBtn.Text = "..."
+                    Tween(BindBtn, {BackgroundColor3 = Theme.ElementHover}, 0.2)
+                end)
+
+                UserInputService.InputBegan:Connect(function(input, gpe)
+                    if not isBinding then return end
+                    if input.UserInputType == Enum.UserInputType.Keyboard then
+                        local key = input.KeyCode
+                        if key == Enum.KeyCode.Escape then
+                            -- Cancel
+                            BindBtn.Text = currentKey == Enum.KeyCode.Unknown and "None" or currentKey.Name
+                        else
+                            currentKey = key
+                            BindBtn.Text = key.Name
+                            Callback(key)
+                        end
+                        isBinding = false
+                        Tween(BindBtn, {BackgroundColor3 = Theme.Background}, 0.2)
+                    end
+                end)
+            end
+
+            function SectionObj:AddColorPicker(cfg)
+                local CName = cfg.Name or "Color Picker"
+                local Default = cfg.Default or Color3.fromRGB(255, 255, 255)
+                local Callback = cfg.Callback or function() end
+
+                local el = BaseElement(CName)
+                local currentColor = Default
+                local h, s, v = Color3.toHSV(currentColor)
+
+                local ColorPreview = Create("Frame", {
+                    Size = UDim2.new(0, 30, 0, 20),
+                    Position = UDim2.new(1, -40, 0.5, -10),
+                    BackgroundColor3 = currentColor,
+                    Parent = el
+                }, {
+                    Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                    Create("UIStroke", { Color = Theme.Outline, Thickness = 1 })
+                })
+                
+                local Trigger = Create("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = el })
+
+                Trigger.MouseButton1Click:Connect(function()
+                    if ActivePopup then ClosePopup() return end
+
+                    local Popup = Create("Frame", {
+                        Size = UDim2.new(0, 200, 0, 230),
+                        BackgroundColor3 = Theme.ElementHover,
+                        ZIndex = 100,
+                        Active = true
+                    }, {
+                        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+                        Create("UIStroke", { Color = Theme.Outline, Thickness = 1 })
+                    })
+
+                    -- SV Map (Saturation / Value)
+                    local SVMap = Create("TextButton", {
+                        Size = UDim2.new(1, -20, 0, 150),
+                        Position = UDim2.new(0, 10, 0, 10),
+                        BackgroundColor3 = Color3.fromHSV(h, 1, 1),
+                        AutoButtonColor = false,
+                        Text = "",
+                        ZIndex = 101,
+                        Parent = Popup
+                    }, {
+                        Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                        -- X Gradient (White to Transparent)
+                        Create("Frame", {
+                            Size = UDim2.new(1, 0, 1, 0),
+                            BackgroundColor3 = Color3.new(1, 1, 1),
+                            ZIndex = 102,
+                            BackgroundTransparency = 0
+                        }, {
+                            Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                            Create("UIGradient", {
+                                Transparency = NumberSequence.new{
+                                    NumberSequenceKeypoint.new(0, 0),
+                                    NumberSequenceKeypoint.new(1, 1)
+                                }
+                            })
+                        }),
+                        -- Y Gradient (Transparent to Black)
+                        Create("Frame", {
+                            Size = UDim2.new(1, 0, 1, 0),
+                            BackgroundColor3 = Color3.new(0, 0, 0),
+                            ZIndex = 103,
+                            BackgroundTransparency = 0
+                        }, {
+                            Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                            Create("UIGradient", {
+                                Rotation = 90,
+                                Transparency = NumberSequence.new{
+                                    NumberSequenceKeypoint.new(0, 1),
+                                    NumberSequenceKeypoint.new(1, 0)
+                                }
+                            })
+                        })
+                    })
+
+                    -- SV Cursor
+                    local SVCursor = Create("Frame", {
+                        Size = UDim2.new(0, 10, 0, 10),
+                        AnchorPoint = Vector2.new(0.5, 0.5),
+                        Position = UDim2.new(s, 0, 1 - v, 0),
+                        BackgroundColor3 = Color3.new(1, 1, 1),
+                        ZIndex = 104,
+                        Parent = SVMap
+                    }, {
+                        Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+                        Create("UIStroke", { Color = Color3.new(0,0,0), Thickness = 1 })
+                    })
+
+                    -- Hue Slider
+                    local HueSlider = Create("TextButton", {
+                        Size = UDim2.new(1, -20, 0, 20),
+                        Position = UDim2.new(0, 10, 0, 170),
+                        BackgroundColor3 = Color3.new(1, 1, 1),
+                        AutoButtonColor = false,
+                        Text = "",
+                        ZIndex = 101,
+                        Parent = Popup
+                    }, {
+                        Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
+                        Create("UIGradient", {
+                            Color = ColorSequence.new{
+                                ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+                                ColorSequenceKeypoint.new(0.167, Color3.fromRGB(255, 255, 0)),
+                                ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
+                                ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+                                ColorSequenceKeypoint.new(0.667, Color3.fromRGB(0, 0, 255)),
+                                ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
+                                ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
+                            }
+                        })
+                    })
+
+                    local HueCursor = Create("Frame", {
+                        Size = UDim2.new(0, 4, 1, 4),
+                        AnchorPoint = Vector2.new(0.5, 0.5),
+                        Position = UDim2.new(1 - h, 0, 0.5, 0),
+                        BackgroundColor3 = Color3.new(1,1,1),
+                        ZIndex = 102,
+                        Parent = HueSlider
+                    }, { Create("UIStroke", { Color = Color3.new(0,0,0) }) })
+
+                    -- Result Preview Input
+                    local HexInput = Create("TextBox", {
+                        Size = UDim2.new(1, -20, 0, 20),
+                        Position = UDim2.new(0, 10, 0, 200),
+                        BackgroundColor3 = Theme.Background,
+                        Text = "#" .. currentColor:ToHex():upper(),
+                        TextColor3 = Theme.Text,
+                        Font = Enum.Font.Gotham,
+                        TextSize = 12,
+                        ZIndex = 101,
+                        Parent = Popup
+                    }, { Create("UICorner", { CornerRadius = UDim.new(0, 4) }) })
+
+                    local function UpdateColor()
+                        currentColor = Color3.fromHSV(h, s, v)
+                        SVMap.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+                        ColorPreview.BackgroundColor3 = currentColor
+                        HexInput.Text = "#" .. currentColor:ToHex():upper()
+                        Callback(currentColor)
+                    end
+
+                    -- Dragging Logic
+                    local draggingSV, draggingHue = false, false
+                    
+                    SVMap.InputBegan:Connect(function(input)
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingSV = true end
+                    end)
+                    HueSlider.InputBegan:Connect(function(input)
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingHue = true end
+                    end)
+                    UserInputService.InputEnded:Connect(function(input)
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                            draggingSV = false
+                            draggingHue = false
+                        end
+                    end)
+
+                    UserInputService.InputChanged:Connect(function(input)
+                        if input.UserInputType == Enum.UserInputType.MouseMovement then
+                            if draggingSV then
+                                local relX = math.clamp((input.Position.X - SVMap.AbsolutePosition.X) / SVMap.AbsoluteSize.X, 0, 1)
+                                local relY = math.clamp((input.Position.X - SVMap.AbsolutePosition.Y) / SVMap.AbsoluteSize.Y, 0, 1)
+                                -- Actually use correct Y axis mouse position
+                                relY = math.clamp((input.Position.Y - SVMap.AbsolutePosition.Y) / SVMap.AbsoluteSize.Y, 0, 1)
+                                s = relX
+                                v = 1 - relY
+                                SVCursor.Position = UDim2.new(s, 0, 1 - v, 0)
+                                UpdateColor()
+                            elseif draggingHue then
+                                local relX = math.clamp((input.Position.X - HueSlider.AbsolutePosition.X) / HueSlider.AbsoluteSize.X, 0, 1)
+                                h = 1 - relX
+                                HueCursor.Position = UDim2.new(relX, 0, 0.5, 0)
+                                UpdateColor()
+                            end
+                        end
+                    end)
+
+                    OpenPopup(el, Popup)
+                end)
+            end
+
+            return SectionObj
+        end
+
+        return TabObj
+    end
+
+    -- Notifications System
+    function WindowObj:Notify(cfg)
+        local Title = cfg.Title or "Notification"
+        local Content = cfg.Content or "Content here"
+        local Duration = cfg.Duration or 3
+
+        -- Create notification container if not exists
+        local NotifContainer = ScreenGui:FindFirstChild("NotifContainer")
+        if not NotifContainer then
+            NotifContainer = Create("Frame", {
+                Name = "NotifContainer",
+                Size = UDim2.new(0, 250, 1, -20),
+                Position = UDim2.new(1, -270, 0, 10),
+                BackgroundTransparency = 1,
+                Parent = ScreenGui
+            }, {
+                Create("UIListLayout", {
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    VerticalAlignment = Enum.VerticalAlignment.Bottom,
+                    Padding = UDim.new(0, 10)
+                })
+            })
+        end
+
+        local Notif = Create("Frame", {
+            Size = UDim2.new(1, 0, 0, 60),
+            BackgroundColor3 = Theme.Background,
+            Position = UDim2.new(1, 300, 0, 0), -- Start off-screen
+            Parent = NotifContainer
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+            Create("UIStroke", { Color = Theme.Accent, Thickness = 1 }),
+            Create("TextLabel", {
+                Text = Title,
+                Font = Enum.Font.GothamBold,
+                TextColor3 = Theme.Text,
+                TextSize = 14,
+                Position = UDim2.new(0, 10, 0, 10),
+                Size = UDim2.new(1, -20, 0, 15),
+                BackgroundTransparency = 1,
+                TextXAlignment = Enum.TextXAlignment.Left
+            }),
+            Create("TextLabel", {
+                Text = Content,
+                Font = Enum.Font.Gotham,
+                TextColor3 = Theme.SubText,
+                TextSize = 12,
+                Position = UDim2.new(0, 10, 0, 30),
+                Size = UDim2.new(1, -20, 0, 20),
+                BackgroundTransparency = 1,
+                TextWrapped = true,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+        })
+
+        -- Animate In
+        Tween(Notif, {Position = UDim2.new(0, 0, 0, 0)}, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        
+        task.delay(Duration, function()
+            -- Animate Out
+            local tween = Tween(Notif, {Position = UDim2.new(1, 300, 0, 0)}, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+            tween.Completed:Connect(function() Notif:Destroy() end)
+        end)
+    end
+
+    return WindowObj
+end
+
+return Library
