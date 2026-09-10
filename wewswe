@@ -477,10 +477,13 @@ function Window.new(library, config)
 	self.Frame = frame
 
 	-- Soft shadow: several stacked, offset, rounded frames -----------
+	-- Transparencies kept extremely high so the layers never form a
+	-- dark veil over the window content (previous values were too opaque
+	-- when stacked and made every element hard to read).
 	local shadowLayers = {
-		{ pad = 20, transparency = 0.98 },
-		{ pad = 13, transparency = 0.97 },
-		{ pad = 7,  transparency = 0.95 },
+		{ pad = 14, transparency = 0.992 },
+		{ pad = 9,  transparency = 0.988 },
+		{ pad = 5,  transparency = 0.982 },
 	}
 	for index, layer in ipairs(shadowLayers) do
 		local shadow = Create("Frame", {
@@ -501,6 +504,7 @@ function Window.new(library, config)
 	local body = Create("CanvasGroup", {
 		Name = "Body",
 		BackgroundColor3 = theme.Background,
+		BackgroundTransparency = 0, -- explicit so content never shows the shadow layers underneath
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 1),
 		GroupTransparency = 0,
